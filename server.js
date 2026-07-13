@@ -230,8 +230,28 @@ function requireAdmin(req, res, next) {
 app.get('/admin', requireAdmin, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
-
-app.get('/api/pending', requireAdmin, (req, res) => {
+// Temporary diagnostic route - checks whether this server can reach Telegram at all.
+// Safe to remove later once the channel poller is confirmed working.
+app.get('/debug/telegram-check', requireAdmin, async (req, res) => {
+  try {
+    const start = Date.now();
+    const response = await fetch('https://t.me/s/enesinbutigi2', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+    });
+    const elapsed = Date.now() - start;
+    const bodyPreview = (await response.text()).slice(0, 200);
+    res.json({ ok: true, status: response.status, elapsedMs: elapsed, bodyPreview });
+  } catch (err) {
+    res.json({
+      ok: false,
+      errorMessage: err.message,
+      errorCause: err.cause ? String(err.cause) : null,
+      errorStack: err.stack,
+    });
+  }
+});app.get('/api/pending', requireAdmin, (req, res) => {
   const db = loadDB();
   res.json(db.pending);
 });

@@ -27,8 +27,6 @@ function saveState(stateFile, state) {
   fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
 }
 
-// Turns the caption's inner HTML (which may contain <br> for line breaks and <a> for links)
-// into plain text, preserving line breaks so the existing per-line price logic still works.
 function htmlToPlainText(html) {
   if (!html) return '';
   const withBreaks = html.replace(/<br\s*\/?>/gi, '\n');
@@ -41,7 +39,7 @@ function parseMessages(html) {
   const messages = [];
 
   $('.tgme_widget_message').each((_, el) => {
-    const dataPost = $(el).attr('data-post'); // e.g. "channelname/123"
+    const dataPost = $(el).attr('data-post');
     if (!dataPost) return;
     const id = parseInt(dataPost.split('/').pop(), 10);
     if (!id) return;
@@ -63,7 +61,11 @@ function parseMessages(html) {
 }
 
 async function downloadImage(url, uploadsDir) {
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+  });
   const buffer = Buffer.from(await res.arrayBuffer());
   const ext = path.extname(new URL(url).pathname) || '.jpg';
   const localName = `${crypto.randomUUID()}${ext}`;
@@ -72,7 +74,11 @@ async function downloadImage(url, uploadsDir) {
 }
 
 async function pollChannel(channel, { uploadsDir, state, processCaptionIntoItems, summarizeItems, onNotify }) {
-  const res = await fetch(`https://t.me/s/${channel}`);
+  const res = await fetch(`https://t.me/s/${channel}`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+  });
   if (!res.ok) {
     console.error(`Channel poller: could not reach t.me/s/${channel} (status ${res.status})`);
     return;
@@ -85,8 +91,6 @@ async function pollChannel(channel, { uploadsDir, state, processCaptionIntoItems
   const maxId = Math.max(...messages.map(m => m.id));
 
   if (lastSeenId === undefined) {
-    // First time seeing this channel - set the baseline to "now" rather than creating catalog
-    // items for the channel's entire history. Only posts after this point get processed.
     state[channel] = maxId;
     console.log(`Channel poller: baseline set for "${channel}" (starting from post ${maxId}). ` +
       `Existing posts in this channel won't be imported - only new ones from here.`);
@@ -129,13 +133,13 @@ function startChannelPoller({ uploadsDir, dataDir, processCaptionIntoItems, summ
       try {
         await pollChannel(channel, { uploadsDir, state, processCaptionIntoItems, summarizeItems, onNotify });
       } catch (err) {
-        console.error(`Channel poller: error polling "${channel}":`, err.message);
+        console.error(`Channel poller: error polling "${channel}":`, err.message, err.cause ? `| cause: ${err.cause}` : '');
       }
     }
     saveState(stateFile, state);
   };
 
-  runOnce(); // establish baseline / catch up immediately on startup
+  runOnce();
   setInterval(runOnce, intervalMinutes * 60 * 1000);
 }
 

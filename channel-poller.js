@@ -89,8 +89,27 @@ async function pollChannel(channel, { uploadsDir, state, processCaptionIntoItems
 
   const lastSeenId = state[channel];
   const maxId = Math.max(...messages.map(m => m.id));
+  const backfillCount = parseInt(process.env.TELEGRAM_BACKFILL_COUNT || '0', 10);
 
   if (lastSeenId === undefined) {
+    if (backfillCount > 0) {
+      const recentWithPhotos = messages.filter(m => m.photoUrls.length > 0).slice(-backfillCount);
+      console.log(`Channel poller: backfilling ${recentWithPhotos.length} recent post(s) from "${channel}" (TELEGRAM_BACKFILL_COUNT is set).`);
+      for (const msg of recentWithPhotos) {
+        try {
+          const localFile = await downloadImage(msg.photoUrls[0], uploadsDir);
+          const createdItems = processCaptionIntoItems(msg.caption, localFile);
+          const summary = summarizeItems(createdItems);
+          console.log(`Channel poller ["${channel}" post ${msg.id}, backfilled]: ${summary}`);
+          if (onNotify) onNotify(`[${channel}] ${summary}`);
+        } catch (err) {
+          console.error(`Channel poller: failed backfilling post ${msg.id} from "${channel}":`, err.message);
+        }
+      }
+      state[channel] = maxId;
+      return;
+    }
+
     state[channel] = maxId;
     console.log(`Channel poller: baseline set for "${channel}" (starting from post ${maxId}). ` +
       `Existing posts in this channel won't be imported - only new ones from here.`);

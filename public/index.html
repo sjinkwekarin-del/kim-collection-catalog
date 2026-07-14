@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kim Collection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Alex+Brush&family=Cormorant+Garamond:wght@400;500;600&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --blush: #FBF3EF;
+    --card: #FFFFFF;
+    --rose-gold: #B76E79;
+    --rose-deep: #8C5A63;
+    --gold: #C9A66B;
+    --ink: #3A2C2E;
+    --muted: #948581;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--blush);
+    color: var(--ink);
+    font-family: 'Jost', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    text-align: center;
+    padding: 64px 24px 40px;
+  }
+
+  .logo {
+    font-family: 'Alex Brush', cursive;
+    font-size: 64px;
+    color: var(--rose-gold);
+    margin: 0;
+    line-height: 1;
+  }
+
+  .hairline {
+    width: 120px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    margin: 18px auto;
+  }
+
+  .tagline {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 19px;
+    font-style: italic;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 24px 80px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 28px;
+  }
+
+  .card {
+    background: var(--card);
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 2px 18px rgba(140, 90, 99, 0.08);
+    transition: box-shadow 0.25s ease, transform 0.25s ease;
+    border: 1px solid rgba(201, 166, 107, 0.15);
+  }
+
+  .card:hover {
+    box-shadow: 0 8px 28px rgba(140, 90, 99, 0.16);
+    transform: translateY(-3px);
+  }
+
+  .card-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+    gap: 2px;
+  }
+  .card-gallery.count-1 { grid-template-columns: 1fr; }
+  .card-gallery.count-2 { grid-template-columns: 1fr 1fr; }
+  .card-gallery.count-3, .card-gallery.count-4 { grid-template-columns: 1fr 1fr; }
+
+  .gallery-image-wrap {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    background: #f2e9e5;
+  }
+
+  .card-gallery.count-1 .card-image {
+    aspect-ratio: 4 / 5;
+    object-fit: contain;
+    background: #f7f0ed;
+  }
+
+  .download-btn {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background: rgba(255,255,255,0.9);
+    border: 1px solid rgba(201,166,107,0.4);
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+    color: var(--rose-deep);
+    font-size: 15px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.12);
+  }
+
+  .card-body {
+    padding: 18px 20px 22px;
+  }
+
+  .card-desc {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 17px;
+    line-height: 1.4;
+    margin: 0 0 12px;
+    color: var(--ink);
+    min-height: 24px;
+  }
+
+  .card-price {
+    font-family: 'Jost', sans-serif;
+    font-weight: 600;
+    font-size: 18px;
+    color: var(--rose-deep);
+    letter-spacing: 0.02em;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 100px 24px;
+    color: var(--muted);
+  }
+
+  .empty-state .flourish {
+    font-family: 'Alex Brush', cursive;
+    font-size: 32px;
+    color: var(--rose-gold);
+    display: block;
+    margin-bottom: 12px;
+  }
+
+  footer {
+    text-align: center;
+    padding: 40px 24px 60px;
+    font-size: 13px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 class="logo">Kim Collection</h1>
+  <div class="hairline"></div>
+  <p class="tagline">Curated Korean beauty, chosen with care</p>
+</header>
+
+<main>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty-state" style="display:none;">
+    <span class="flourish">a moment, please</span>
+    New pieces are being curated. Check back soon.
+  </div>
+</main>
+
+<footer>Kim Collection</footer>
+
+<script>
+  async function loadProducts() {
+    const res = await fetch('/api/products');
+    const data = await res.json();
+    const grid = document.getElementById('grid');
+    const empty = document.getElementById('empty');
+
+    if (!data.products.length) {
+      empty.style.display = 'block';
+      return;
+    }
+
+    grid.innerHTML = data.products.map(p => {
+      const count = Math.min(p.imageUrls.length, 4) || 1;
+      const images = p.imageUrls.length ? p.imageUrls : [];
+      const galleryHtml = images.map((url, idx) => `
+        <div class="gallery-image-wrap">
+          <img class="card-image" src="${url}" alt="" loading="lazy">
+          <a class="download-btn" href="${url}" download title="Download photo">&#8595;</a>
+        </div>
+      `).join('');
+
+      return `
+        <div class="card">
+          <div class="card-gallery count-${count}">${galleryHtml}</div>
+          <div class="card-body">
+            <p class="card-desc">${p.description || ''}</p>
+            <div class="card-price">${data.currencySymbol}${p.price !== null ? Number(p.price).toFixed(2) : '—'}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  loadProducts();
+</script>
+
+</body>
+</html>

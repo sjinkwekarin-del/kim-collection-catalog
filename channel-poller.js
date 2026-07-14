@@ -1,0 +1,175 @@
+// Watches one or more PUBLIC Telegram channels for new posts, using Telegram's own public web
+// preview (t.me/s/<channel>) - no login, no account, no session. This only works for channels
+// that are public (have a t.me/channelname link). Private channels aren't reachable this way.
+//
+// Trade-off: this checks periodically rather than reacting instantly. A new post might take up
+// to POLL_INTERVAL_MINUTES to show up in your review queue or catalog.
+//
+// Configure with TELEGRAM_CHANNELS (comma-separated channel usernames, no @, e.g.
+// "enesinbutigi2,anothersupplier") to turn this on. Leave unset to skip it entirely - the
+// manual forward-to-bot flow works completely fine on its own either way.
+
+const cheerio = require('cheerio');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+function loadState(stateFile) {
+  if (!fs.existsSync(stateFile)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveState(stateFile, state) {
+  fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
+}
+
+// Turns the caption's inner HTML (which may contain <br> for line breaks and <a> for links)
+// into plain text, preserving line breaks so the existing per-line price logic still works.
+function htmlToPlainText(html) {
+  if (!html) return '';
+  const withBreaks = html.replace(/<br\s*\/?>/gi, '\n');
+  const $ = cheerio.load(`<div>${withBreaks}</div>`);
+  return $('div').text();
+}
+
+function parseMessages(html) {
+  const $ = cheerio.load(html);
+  const messages = [];
+
+  $('.tgme_widget_message').each((_, el) => {
+    const dataPost = $(el).attr('data-post'); // e.g. "channelname/123"
+    if (!dataPost) return;
+    const id = parseInt(dataPost.split('/').pop(), 10);
+    if (!id) return;
+
+    const photoUrls = [];
+    $(el).find('[style*="background-image"]').each((_, photoEl) => {
+      const style = $(photoEl).attr('style') || '';
+      const match = style.match(/background-image:\s*url\(['"]?(.*?)['"]?\)/);
+      if (match) photoUrls.push(match[1]);
+    });
+
+    const captionHtml = $(el).find('.tgme_widget_message_text').first().html();
+    const caption = htmlToPlainText(captionHtml);
+
+    messages.push({ id, photoUrls, caption });
+  });
+
+  return messages.sort((a, b) => a.id - b.id);
+}
+
+async function downloadImages(urls, uploadsDir) {
+  const localFiles = [];
+  for (const url of urls) {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+    });
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const ext = path.extname(new URL(url).pathname) || '.jpg';
+    const localName = `${crypto.randomUUID()}${ext}`;
+    fs.writeFileSync(path.join(uploadsDir, localName), buffer);
+    localFiles.push(localName);
+  }
+  return localFiles;
+}
+
+async function pollChannel(channel, { uploadsDir, state, processCaptionIntoItems, summarizeItems, onNotify }) {
+  const res = await fetch(`https://t.me/s/${channel}`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+  });
+  if (!res.ok) {
+    console.error(`Channel poller: could not reach t.me/s/${channel} (status ${res.status})`);
+    return;
+  }
+  const html = await res.text();
+  const messages = parseMessages(html);
+  if (!messages.length) return;
+
+  const lastSeenId = state[channel];
+  const maxId = Math.max(...messages.map(m => m.id));
+  const backfillCount = parseInt(process.env.TELEGRAM_BACKFILL_COUNT || '0', 10);
+
+  if (lastSeenId === undefined) {
+    if (backfillCount > 0) {
+      // One-time testing aid: process the most recent existing posts (instead of only future
+      // ones) so you can confirm the pipeline works without waiting for organic new activity.
+      const recentWithPhotos = messages.filter(m => m.photoUrls.length > 0).slice(-backfillCount);
+      console.log(`Channel poller: backfilling ${recentWithPhotos.length} recent post(s) from "${channel}" (TELEGRAM_BACKFILL_COUNT is set).`);
+      for (const msg of recentWithPhotos) {
+        try {
+          const localFiles = await downloadImages(msg.photoUrls, uploadsDir);
+          const createdItems = processCaptionIntoItems(msg.caption, localFiles, channel);
+          const summary = summarizeItems(createdItems);
+          console.log(`Channel poller ["${channel}" post ${msg.id}, backfilled]: ${summary}`);
+          if (onNotify) onNotify(`[${channel}] ${summary}`);
+        } catch (err) {
+          console.error(`Channel poller: failed backfilling post ${msg.id} from "${channel}":`, err.message);
+        }
+      }
+      state[channel] = maxId;
+      return;
+    }
+
+    // First time seeing this channel - set the baseline to "now" rather than creating catalog
+    // items for the channel's entire history. Only posts after this point get processed.
+    state[channel] = maxId;
+    console.log(`Channel poller: baseline set for "${channel}" (starting from post ${maxId}). ` +
+      `Existing posts in this channel won't be imported - only new ones from here.`);
+    return;
+  }
+
+  const newMessages = messages.filter(m => m.id > lastSeenId && m.photoUrls.length > 0);
+
+  for (const msg of newMessages) {
+    try {
+      const localFiles = await downloadImages(msg.photoUrls, uploadsDir);
+      const createdItems = processCaptionIntoItems(msg.caption, localFiles, channel);
+      const summary = summarizeItems(createdItems);
+      console.log(`Channel poller ["${channel}" post ${msg.id}]: ${summary}`);
+      if (onNotify) onNotify(`[${channel}] ${summary}`);
+    } catch (err) {
+      console.error(`Channel poller: failed processing post ${msg.id} from "${channel}":`, err.message);
+    }
+  }
+
+  state[channel] = maxId;
+}
+
+function startChannelPoller({ uploadsDir, dataDir, processCaptionIntoItems, summarizeItems, onNotify }) {
+  const channelsEnv = process.env.TELEGRAM_CHANNELS;
+  if (!channelsEnv) {
+    console.log('Channel poller not started - TELEGRAM_CHANNELS not set. Manual forward-to-bot still works normally.');
+    return;
+  }
+
+  const channels = channelsEnv.split(',').map(c => c.trim().replace(/^@/, '')).filter(Boolean);
+  const intervalMinutes = parseFloat(process.env.POLL_INTERVAL_MINUTES || '3');
+  const stateFile = path.join(dataDir, 'poller-state.json');
+
+  console.log(`Channel poller starting. Watching: ${channels.join(', ')} (every ${intervalMinutes} min)`);
+
+  const runOnce = async () => {
+    const state = loadState(stateFile);
+    for (const channel of channels) {
+      try {
+        await pollChannel(channel, { uploadsDir, state, processCaptionIntoItems, summarizeItems, onNotify });
+      } catch (err) {
+        console.error(`Channel poller: error polling "${channel}":`, err.message, err.cause ? `| cause: ${err.cause}` : '');
+      }
+    }
+    saveState(stateFile, state);
+  };
+
+  runOnce(); // establish baseline / catch up immediately on startup
+  setInterval(runOnce, intervalMinutes * 60 * 1000);
+}
+
+module.exports = { startChannelPoller, parseMessages, htmlToPlainText };
